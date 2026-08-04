@@ -47,7 +47,8 @@ gh repo create data-analysis-agent --public --source=. --remote=origin --push
 
 1. 打开 https://vercel.com 并登录（可用 GitHub 登录）
 2. **Add New Project** → 导入 `Kyrie35/data-analysis-agent`
-3. Vercel 会自动识别 `vercel.json` 中的 `rootDirectory: frontend`
+3. 在 **Root Directory** 填 `frontend`，Framework 选 **Next.js**
+   - 不要在仓库里放带 `rootDirectory` 的 `vercel.json`（Vercel 新版不支持）
 4. 在 **Environment Variables** 添加：
 
 | 变量名 | 值 |
