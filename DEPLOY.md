@@ -26,7 +26,9 @@ gh repo create data-analysis-agent --public --source=. --remote=origin --push
 1. 打开 https://railway.app 并登录（可用 GitHub 登录）
 2. **New Project** → **Deploy from GitHub repo**
 3. 选择 `Kyrie35/data-analysis-agent`
-4. 进入项目设置，把 **Root Directory** 设为：`backend`
+4. **重要：Root Directory 留空（使用仓库根目录）**
+   - 项目根目录已有 `Dockerfile` 和 `railway.toml`，会自动构建 `backend/`
+   - 如果你之前设过 Root Directory 为 `backend` 且失败，请改回 **空** 或 `/`
 5. 在 **Variables** 添加环境变量：
 
 | 变量名 | 值 |
@@ -84,4 +86,5 @@ https://你的-vercel-域名.vercel.app,http://localhost:3000
 | 前端报「分析请求失败」 | 检查 `NEXT_PUBLIC_API_BASE_URL` 是否正确 |
 | CORS 错误 | 更新 Railway 的 `ALLOWED_ORIGINS` 包含 Vercel 域名 |
 | AI 报告 skipped | 检查 Railway 是否配置了 `DEEPSEEK_API_KEY` |
-| Railway 部署失败 | 确认 Root Directory 设为 `backend` |
+| Railway 部署失败 / railpack 报错 | Root Directory 留空，确保使用根目录 Dockerfile；然后 Redeploy |
+| Railway 用了错误构建方式 | Settings → Build → Builder 选 **Dockerfile** |
