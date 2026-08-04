@@ -42,10 +42,17 @@ export async function analyzeFile(file: File): Promise<AnalyzeResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/api/analyze`, {
-    method: "POST",
-    body: formData,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/analyze`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认 Railway 后端已部署，且 Vercel 已配置 NEXT_PUBLIC_API_BASE_URL 并重新 Deploy。`,
+    );
+  }
 
   if (!response.ok) {
     let message = "分析请求失败";
