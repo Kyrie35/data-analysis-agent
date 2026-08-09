@@ -1,6 +1,10 @@
 # 数据分析 Agent
 
-上传 CSV / Excel，自动解析数据、计算指标、生成图表，并由 DeepSeek 输出 AI 分析总结。当前为 **阶段 3**。
+上传 CSV / Excel，自动解析数据、计算指标、生成图表，并由 DeepSeek 输出 AI 分析总结。
+
+**线上体验：** https://tc-ddagent.vercel.app
+
+**详细说明文档：** [docs/项目说明.md](./docs/项目说明.md)（架构、运行流程、API、环境变量等）
 
 ## 项目结构
 
