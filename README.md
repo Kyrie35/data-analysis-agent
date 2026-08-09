@@ -1,6 +1,6 @@
 # 数据分析 Agent
 
-上传 CSV / Excel，自动解析数据、计算指标、生成图表，并由 DeepSeek 输出 AI 分析总结。
+上传 CSV / Excel：先由 AI 规划分析重点，再生成指标与图表，最后输出报告。支持本地偏好库与基于原表的追问；AI 规划失败时回退规则可视化。
 
 **线上体验：** https://tc-ddagent.vercel.app
 
@@ -67,8 +67,9 @@ npm run dev
 ### 3. 测试
 
 1. 打开 http://localhost:3000
-2. 上传 `sample_data/sales_sample.csv`
-3. 应看到关键指标、AI 分析报告、图表
+2. （可选）点击「偏好库」添加个人分析视角，上传前勾选「从偏好库视角分析」
+3. 上传 `sample_data/sales_sample.csv`
+4. 应看到关键指标、AI 分析报告、图表，并可在报告下方继续追问
 
 ## 环境变量
 
@@ -86,5 +87,17 @@ npm run dev
 
 `POST /api/analyze`
 
-- 请求：`multipart/form-data`，字段名 `file`
-- 响应：文件概览 + 指标 + 图表 + AI 分析 + 前 5 行预览
+- 请求：`multipart/form-data`
+  - `file`：CSV / Excel（必填）
+  - `use_preferences`：`true` / `false`（可选）
+  - `preferences`：JSON 数组字符串，如 `[{"title":"...","content":"..."}]`（可选）
+- 响应：文件概览 + 指标 + 图表 + AI 分析 + 前 5 行预览（`analysis.used_preferences` 表示是否注入了偏好）
+
+`POST /api/chat`
+
+- 请求：JSON，需带 `analysis_id`（分析接口返回），以及对话历史、可选偏好
+- 后端会按 `analysis_id` 取回原始表格，通过查询工具再计算后回答
+- 响应：AI 追问回答（`status` / `content` / `used_preferences` / `used_raw_data`）
+- `analysis_id` 对应的原表会话在服务端内存中约保留 1 小时；重启后端或超时后需重新上传
+
+偏好库保存在浏览器 `localStorage`，不经过服务端持久化。

@@ -33,11 +33,18 @@ export default function AnalysisReport({ analysis }: AnalysisReportProps) {
             </p>
           </div>
         </div>
-        {analysis.model && (
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-            {analysis.model}
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {analysis.used_preferences && (
+            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
+              已按偏好分析
+            </span>
+          )}
+          {analysis.model && (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+              {analysis.model}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="mt-6 space-y-3">

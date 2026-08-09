@@ -48,7 +48,9 @@ export default function FileUpload({ onUpload, loading }: FileUploadProps) {
         onClick={() => inputRef.current?.click()}
         className="mt-6 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
       >
-        {loading ? "正在分析，AI 生成报告中..." : "选择文件"}
+        {loading
+          ? "正在读取偏好约束并生成分析报告与可视化…"
+          : "选择文件"}
       </button>
 
       <input

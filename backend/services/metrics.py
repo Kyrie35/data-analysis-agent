@@ -3,7 +3,7 @@ from typing import Any
 import pandas as pd
 
 
-def _format_number(value: float) -> str:
+def format_number(value: float) -> str:
     if abs(value) >= 1_000_000:
         return f"{value:,.0f}"
     if float(value).is_integer():
@@ -15,7 +15,7 @@ def compute_metrics(df: pd.DataFrame, column_types: dict[str, str]) -> list[dict
     metrics: list[dict[str, Any]] = [
         {
             "label": "数据行数",
-            "value": _format_number(len(df)),
+            "value": format_number(len(df)),
             "description": "有效记录总数",
         }
     ]
@@ -25,7 +25,7 @@ def compute_metrics(df: pd.DataFrame, column_types: dict[str, str]) -> list[dict
         metrics.append(
             {
                 "label": "缺失值",
-                "value": _format_number(missing_cells),
+                "value": format_number(missing_cells),
                 "description": "全表空值单元格数量",
             }
         )
@@ -39,14 +39,14 @@ def compute_metrics(df: pd.DataFrame, column_types: dict[str, str]) -> list[dict
         metrics.append(
             {
                 "label": f"{col} 合计",
-                "value": _format_number(float(series.sum())),
+                "value": format_number(float(series.sum())),
                 "description": f"{col} 的总和",
             }
         )
         metrics.append(
             {
                 "label": f"{col} 平均值",
-                "value": _format_number(float(series.mean())),
+                "value": format_number(float(series.mean())),
                 "description": f"{col} 的均值",
             }
         )
