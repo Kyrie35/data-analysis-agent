@@ -26,13 +26,34 @@ def _try_parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     return converted
 
 
-def load_dataframe(filename: str, content: bytes) -> pd.DataFrame:
+def list_sheet_names(filename: str, content: bytes) -> list[str]:
+    lower_name = filename.lower()
+    if lower_name.endswith(".csv"):
+        return ["CSV"]
+    if lower_name.endswith((".xlsx", ".xls")):
+        workbook = pd.ExcelFile(io.BytesIO(content))
+        names = [str(name) for name in workbook.sheet_names]
+        if not names:
+            raise ValueError("Excel 文件没有工作表")
+        return names
+    raise ValueError("仅支持 CSV 或 Excel（.xlsx / .xls）文件")
+
+
+def load_dataframe(
+    filename: str,
+    content: bytes,
+    sheet_name: str | None = None,
+) -> pd.DataFrame:
     lower_name = filename.lower()
 
     if lower_name.endswith(".csv"):
         df = pd.read_csv(io.BytesIO(content))
     elif lower_name.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(io.BytesIO(content))
+        sheets = list_sheet_names(filename, content)
+        selected = sheet_name or sheets[0]
+        if selected not in sheets:
+            raise ValueError(f"工作表不存在：{selected}；可选：{sheets}")
+        df = pd.read_excel(io.BytesIO(content), sheet_name=selected)
     else:
         raise ValueError("仅支持 CSV 或 Excel（.xlsx / .xls）文件")
 
@@ -40,6 +61,17 @@ def load_dataframe(filename: str, content: bytes) -> pd.DataFrame:
         raise ValueError("文件没有数据行")
 
     return _try_parse_dates(df)
+
+
+def inspect_upload(filename: str, content: bytes) -> dict[str, Any]:
+    sheets = list_sheet_names(filename, content)
+    default_sheet = None if filename.lower().endswith(".csv") else sheets[0]
+    df = load_dataframe(filename, content, sheet_name=default_sheet)
+    overview = build_overview(filename, df)
+    overview["overview"]["sheet_name"] = default_sheet
+    overview["sheets"] = sheets
+    overview["is_excel"] = filename.lower().endswith((".xlsx", ".xls"))
+    return overview
 
 
 def _serialize_cell(value: Any) -> Any:

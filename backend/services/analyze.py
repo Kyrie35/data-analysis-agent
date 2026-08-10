@@ -6,6 +6,7 @@ from services.analysis_plan import (
     infer_transforms_from_preferences,
     validate_transforms,
 )
+from services.chart_types import filter_charts_by_types, normalize_chart_types
 from services.charts import generate_charts
 from services.metrics import compute_metrics
 from services.parser import build_overview, load_dataframe
@@ -34,10 +35,15 @@ def analyze_upload(
     content: bytes,
     use_preferences: bool = False,
     preferences: list[dict[str, Any]] | None = None,
+    chart_types: list[str] | None = None,
+    sheet_name: str | None = None,
 ) -> dict[str, Any]:
-    raw_df = load_dataframe(filename, content)
+    raw_df = load_dataframe(filename, content, sheet_name=sheet_name)
     result = build_overview(filename, raw_df)
+    if sheet_name:
+        result["overview"]["sheet_name"] = sheet_name
     column_types = result["overview"]["column_types"]
+    allowed_chart_types = normalize_chart_types(chart_types)
 
     pipeline: dict[str, Any] = {
         "mode": "rules_fallback",
@@ -47,17 +53,18 @@ def analyze_upload(
         "focus": [],
         "applied_transforms": [],
         "preferences_applied": bool(use_preferences and preferences),
+        "chart_types": allowed_chart_types,
     }
     analysis_plan: dict[str, Any] | None = None
     working_df = raw_df
     applied: list[dict[str, Any]] = []
 
-    # 1) AI 先读取偏好约束，产出 transforms + 可视化计划
     plan_result = generate_analysis_plan(
         raw_df,
         result["overview"],
         use_preferences=use_preferences,
         preferences=preferences,
+        chart_types=allowed_chart_types,
     )
     pipeline["plan_status"] = plan_result.get("status") or "error"
 
@@ -71,17 +78,15 @@ def analyze_upload(
         )
         plan["transforms"] = transform_specs
 
-        # 2) 偏好约束先作用于数据
         working_df, applied = apply_transforms(raw_df, transform_specs)
         pipeline["applied_transforms"] = applied
 
         adjusted_overview = build_overview(filename, working_df)
         result["preview"] = adjusted_overview["preview"]
 
-        # 3) 在偏好口径上算指标/图
         executed = execute_plan(working_df, plan)
         metrics = executed.get("metrics") or []
-        charts = executed.get("charts") or []
+        charts = filter_charts_by_types(executed.get("charts") or [], allowed_chart_types)
 
         if metrics or charts:
             analysis_plan = {**plan, "applied_transforms": applied}
@@ -102,20 +107,23 @@ def analyze_upload(
             )
             pipeline["applied_transforms"] = applied
             result["metrics"] = compute_metrics(working_df, column_types)
-            result["charts"] = generate_charts(working_df, column_types)
+            result["charts"] = generate_charts(
+                working_df, column_types, chart_types=allowed_chart_types
+            )
             result["preview"] = build_overview(filename, working_df)["preview"]
             pipeline["mode"] = "rules_fallback"
             pipeline["plan_status"] = "error"
             pipeline["message"] = "分析计划执行后无有效可视化，已回退规则引擎（仍尝试应用偏好变换）"
     else:
-        # 规划失败也尽量应用可解析的偏好变换，再走规则可视化
         working_df, applied = apply_transforms(
             raw_df,
             _merge_transforms(None, preferences, raw_df, use_preferences),
         )
         pipeline["applied_transforms"] = applied
         result["metrics"] = compute_metrics(working_df, column_types)
-        result["charts"] = generate_charts(working_df, column_types)
+        result["charts"] = generate_charts(
+            working_df, column_types, chart_types=allowed_chart_types
+        )
         result["preview"] = build_overview(filename, working_df)["preview"]
         pipeline["mode"] = "rules_fallback"
         if plan_result.get("status") == "skipped":
@@ -131,11 +139,9 @@ def analyze_upload(
     if not result.get("metrics"):
         result["metrics"] = compute_metrics(working_df, column_types)
 
-    # 会话保存分析口径数据，追问与报告/图一致
     result["analysis_id"] = create_session(working_df, result["overview"])
     result["pipeline"] = pipeline
 
-    # 4) 基于偏好口径指标/图写报告（报告使用的数字与可视化同源）
     result["analysis"] = generate_analysis(
         result["overview"],
         result["metrics"],

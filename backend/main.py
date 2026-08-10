@@ -5,11 +5,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers.analyze import router as analyze_router
+from routers.auth import router as auth_router
 from routers.chat import router as chat_router
+from routers.history import router as history_router
+from routers.preferences import router as preferences_router
+from services.db import init_db
 
 load_dotenv()
 
-app = FastAPI(title="Data Analysis Agent API", version="0.1.0")
+app = FastAPI(title="Data Analysis Agent API", version="0.2.0")
 
 default_origins = "http://localhost:3000,http://127.0.0.1:3000"
 allowed_origins = [
@@ -29,6 +33,14 @@ app.add_middleware(
 
 app.include_router(analyze_router)
 app.include_router(chat_router)
+app.include_router(auth_router)
+app.include_router(history_router)
+app.include_router(preferences_router)
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 
 @app.get("/health")

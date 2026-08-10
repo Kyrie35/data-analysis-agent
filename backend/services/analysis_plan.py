@@ -20,7 +20,7 @@ ALLOWED_METRIC_OPS = {
     "missing",
     "row_count",
 }
-ALLOWED_CHART_TYPES = {"line", "bar", "histogram"}
+ALLOWED_CHART_TYPES = {"line", "bar", "pie", "histogram"}
 ALLOWED_AGGS = {"sum", "mean", "count", "min", "max", "median"}
 ALLOWED_GRAINS = {"day", "week", "month"}
 ALLOWED_TRANSFORM_OPS = {"multiply", "divide", "add", "subtract"}
@@ -194,11 +194,13 @@ def apply_transforms(
 def validate_plan(
     plan: dict[str, Any] | None,
     df: pd.DataFrame,
+    allowed_chart_types: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(plan, dict):
         return None
 
     transforms = validate_transforms(plan.get("transforms"), df)
+    allowed_types = allowed_chart_types or ALLOWED_CHART_TYPES
 
     metrics: list[dict[str, Any]] = []
     for item in plan.get("metrics") or []:
@@ -214,7 +216,7 @@ def validate_plan(
     for item in plan.get("charts") or []:
         if not isinstance(item, dict):
             continue
-        sanitized = _sanitize_chart(item, df)
+        sanitized = _sanitize_chart(item, df, allowed_types)
         if sanitized:
             charts.append(sanitized)
         if len(charts) >= MAX_CHARTS:
@@ -284,9 +286,14 @@ def _sanitize_metric(item: dict[str, Any], df: pd.DataFrame) -> dict[str, Any] |
     }
 
 
-def _sanitize_chart(item: dict[str, Any], df: pd.DataFrame) -> dict[str, Any] | None:
+def _sanitize_chart(
+    item: dict[str, Any],
+    df: pd.DataFrame,
+    allowed_types: set[str] | None = None,
+) -> dict[str, Any] | None:
     chart_type = str(item.get("type") or "").strip().lower()
-    if chart_type not in ALLOWED_CHART_TYPES:
+    allowed = allowed_types or ALLOWED_CHART_TYPES
+    if chart_type not in ALLOWED_CHART_TYPES or chart_type not in allowed:
         return None
 
     title = str(item.get("title") or "").strip()[:100]
@@ -326,14 +333,14 @@ def _sanitize_chart(item: dict[str, Any], df: pd.DataFrame) -> dict[str, Any] | 
             "agg": agg,
         }
 
-    # bar
+    # bar / pie
     x = resolve_column(df, item.get("x") or item.get("category_column"))
     y = resolve_column(df, item.get("y") or item.get("value_column"))
     if not x or not y:
         return None
     return {
-        "type": "bar",
-        "title": title or f"各{x}的{y}",
+        "type": chart_type,
+        "title": title or (f"各{x}的{y}" if chart_type == "bar" else f"{x}占比"),
         "x": x,
         "y": y,
         "agg": agg,

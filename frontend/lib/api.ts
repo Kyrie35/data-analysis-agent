@@ -1,3 +1,4 @@
+import type { ChartTypeOption } from "@/lib/chartTypes";
 import type { PreferencePayload } from "@/lib/preferences";
 
 export type AnalyzeOverview = {
@@ -6,6 +7,7 @@ export type AnalyzeOverview = {
   columns: number;
   column_names: string[];
   column_types: Record<string, string>;
+  sheet_name?: string | null;
 };
 
 export type MetricItem = {
@@ -15,7 +17,7 @@ export type MetricItem = {
 };
 
 export type ChartItem = {
-  type: "line" | "bar";
+  type: "line" | "bar" | "pie" | "histogram";
   title: string;
   x_key: string;
   y_key: string;
@@ -46,6 +48,7 @@ export type PipelineInfo = {
   focus?: string[];
   applied_transforms?: AppliedTransform[];
   preferences_applied?: boolean;
+  chart_types?: string[];
 };
 
 export type AnalyzeResponse = {
@@ -83,6 +86,48 @@ export type ChatResponse = {
 export type AnalyzeOptions = {
   usePreferences?: boolean;
   preferences?: PreferencePayload[];
+  chartTypes?: ChartTypeOption[];
+  sheetName?: string | null;
+};
+
+export type InspectResponse = {
+  overview: AnalyzeOverview;
+  preview: Record<string, unknown>[];
+  sheets: string[];
+  is_excel: boolean;
+};
+
+export type MetricDelta = {
+  label: string;
+  left: string;
+  right: string;
+  delta: string | null;
+  delta_pct: string | null;
+  comparable: boolean;
+};
+
+export type CompareSide = {
+  analysis_id: string;
+  overview: AnalyzeOverview;
+  preview: Record<string, unknown>[];
+  metrics: MetricItem[];
+  charts: ChartItem[];
+};
+
+export type CompareResponse = {
+  mode: "compare";
+  analysis_id: string;
+  alignment: {
+    common_columns: string[];
+    only_left: string[];
+    only_right: string[];
+    aligned: boolean;
+  };
+  transforms: AppliedTransform[];
+  left: CompareSide;
+  right: CompareSide;
+  metric_deltas: MetricDelta[];
+  analysis: AnalysisResult;
 };
 
 const API_BASE_URL =
@@ -113,6 +158,12 @@ export async function analyzeFile(
   if (options.usePreferences && options.preferences?.length) {
     formData.append("preferences", JSON.stringify(options.preferences));
   }
+  if (options.chartTypes?.length) {
+    formData.append("chart_types", JSON.stringify(options.chartTypes));
+  }
+  if (options.sheetName) {
+    formData.append("sheet_name", options.sheetName);
+  }
 
   let response: Response;
   try {
@@ -131,6 +182,78 @@ export async function analyzeFile(
   }
 
   return response.json() as Promise<AnalyzeResponse>;
+}
+
+export async function inspectFile(file: File): Promise<InspectResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/inspect`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "文件检查失败"));
+  }
+
+  return response.json() as Promise<InspectResponse>;
+}
+
+export type CompareOptions = AnalyzeOptions & {
+  sheetA?: string | null;
+  sheetB?: string | null;
+};
+
+export async function compareFiles(
+  fileA: File,
+  fileB: File,
+  options: CompareOptions = {},
+): Promise<CompareResponse> {
+  const formData = new FormData();
+  formData.append("file_a", fileA);
+  formData.append("file_b", fileB);
+  formData.append(
+    "use_preferences",
+    options.usePreferences ? "true" : "false",
+  );
+  if (options.usePreferences && options.preferences?.length) {
+    formData.append("preferences", JSON.stringify(options.preferences));
+  }
+  if (options.chartTypes?.length) {
+    formData.append("chart_types", JSON.stringify(options.chartTypes));
+  }
+  if (options.sheetA) {
+    formData.append("sheet_a", options.sheetA);
+  }
+  if (options.sheetB) {
+    formData.append("sheet_b", options.sheetB);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/compare`, {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "对比分析失败"));
+  }
+
+  return response.json() as Promise<CompareResponse>;
 }
 
 export async function chatAboutAnalysis(input: {

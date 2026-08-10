@@ -3,16 +3,37 @@
 import { useEffect, useMemo, useState } from "react";
 
 import AnalysisReport from "@/components/AnalysisReport";
+import AuthBar from "@/components/AuthBar";
 import ChartPanel from "@/components/ChartPanel";
+import ChartTypeSelector from "@/components/ChartTypeSelector";
 import ChatPanel from "@/components/ChatPanel";
-import FileUpload from "@/components/FileUpload";
+import CompareResultView from "@/components/CompareResultView";
+import DataSourcePanel, {
+  type AnalysisMode,
+} from "@/components/DataSourcePanel";
+import ExportButtons from "@/components/ExportButtons";
 import MetricsCards from "@/components/MetricsCards";
 import PreferenceLibrary from "@/components/PreferenceLibrary";
 import PreferenceSelector from "@/components/PreferenceSelector";
-import { analyzeFile, type AnalyzeResponse } from "@/lib/api";
 import {
+  analyzeFile,
+  compareFiles,
+  type AnalyzeResponse,
+  type CompareResponse,
+} from "@/lib/api";
+import { getAuth, pushCloudPreferences, saveHistory } from "@/lib/auth";
+import {
+  ALL_CHART_TYPES,
+  CHART_TYPE_LABELS,
+  type ChartTypeOption,
+  normalizeSelectedChartTypes,
+} from "@/lib/chartTypes";
+import { takeHistoryResult } from "@/lib/historyStorage";
+import {
+  loadGroups,
   loadPreferences,
   toPreferencePayloads,
+  type PreferenceGroup,
   type PreferenceItem,
 } from "@/lib/preferences";
 
@@ -24,20 +45,52 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function HomePage() {
+  const [mode, setMode] = useState<AnalysisMode>("single");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
+  const [compareResult, setCompareResult] = useState<CompareResponse | null>(
+    null,
+  );
   const [preferences, setPreferences] = useState<PreferenceItem[]>([]);
+  const [groups, setGroups] = useState<PreferenceGroup[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [usePreferences, setUsePreferences] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prefHint, setPrefHint] = useState<string | null>(null);
   const [lastUsedPreferences, setLastUsedPreferences] = useState(false);
+  const [selectedChartTypes, setSelectedChartTypes] = useState<ChartTypeOption[]>([
+    ...ALL_CHART_TYPES,
+  ]);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const loaded = loadPreferences();
     setPreferences(loaded);
+    setGroups(loadGroups());
     setSelectedIds(loaded.filter((item) => item.enabled).map((item) => item.id));
+
+    const restored = takeHistoryResult<AnalyzeResponse | CompareResponse>();
+    if (restored && "mode" in restored && restored.mode === "compare") {
+      setMode("compare");
+      setCompareResult(restored);
+      setResult(null);
+      setLastUsedPreferences(Boolean(restored.analysis.used_preferences));
+      setHistoryNotice("已从历史恢复对比结果。");
+    } else if (
+      restored &&
+      "overview" in restored &&
+      restored.overview &&
+      restored.analysis
+    ) {
+      setMode("single");
+      setResult(restored as AnalyzeResponse);
+      setCompareResult(null);
+      setLastUsedPreferences(Boolean(restored.analysis.used_preferences));
+      setHistoryNotice(
+        "已从历史恢复结果。若要继续追问，请重新上传同一文件以建立数据会话。",
+      );
+    }
   }, []);
 
   const selectedPreferences = useMemo(
@@ -45,8 +98,24 @@ export default function HomePage() {
     [preferences, selectedIds],
   );
 
-  function handlePreferencesChange(items: PreferenceItem[]) {
+  async function syncPrefsIfLoggedIn(
+    items: PreferenceItem[],
+    nextGroups: PreferenceGroup[],
+  ) {
+    if (!getAuth()?.token) return;
+    try {
+      await pushCloudPreferences({ preferences: items, groups: nextGroups });
+    } catch {
+      // ignore sync errors for local editing
+    }
+  }
+
+  function handleLibraryChange(
+    items: PreferenceItem[],
+    nextGroups: PreferenceGroup[],
+  ) {
     setPreferences(items);
+    setGroups(nextGroups);
     setSelectedIds((prev) => {
       const enabledDefaults = items
         .filter((item) => item.enabled)
@@ -57,6 +126,7 @@ export default function HomePage() {
       if (stillExisting.length > 0) return stillExisting;
       return enabledDefaults;
     });
+    void syncPrefsIfLoggedIn(items, nextGroups);
   }
 
   function handleUsePreferencesChange(value: boolean) {
@@ -67,25 +137,51 @@ export default function HomePage() {
     }
   }
 
-  async function handleUpload(file: File) {
-    if (usePreferences) {
-      if (preferences.length === 0 || selectedPreferences.length === 0) {
-        setPrefHint("已启用偏好，但未选中任何条目。请先添加并勾选偏好，或关闭开关。");
-        return;
-      }
+  function validatePreferences(): boolean {
+    if (!usePreferences) return true;
+    if (preferences.length === 0 || selectedPreferences.length === 0) {
+      setPrefHint("已启用偏好，但未选中任何条目。请先添加并勾选偏好，或关闭开关。");
+      return false;
     }
+    return true;
+  }
+
+  function handleModeChange(next: AnalysisMode) {
+    setMode(next);
+    setError(null);
+    setResult(null);
+    setCompareResult(null);
+    setHistoryNotice(null);
+  }
+
+  async function handleAnalyze(file: File, sheetName: string | null) {
+    if (!validatePreferences()) return;
+
+    const chartTypes = normalizeSelectedChartTypes(selectedChartTypes);
 
     setLoading(true);
     setError(null);
     setPrefHint(null);
+    setHistoryNotice(null);
+    setCompareResult(null);
 
     try {
       const data = await analyzeFile(file, {
         usePreferences,
         preferences: toPreferencePayloads(selectedPreferences),
+        chartTypes,
+        sheetName,
       });
       setResult(data);
       setLastUsedPreferences(Boolean(data.analysis.used_preferences));
+      if (getAuth()?.token) {
+        try {
+          await saveHistory(data);
+          setHistoryNotice("已保存到分析历史");
+        } catch {
+          setHistoryNotice("分析完成，但保存历史失败（可稍后重试登录状态）");
+        }
+      }
     } catch (uploadError) {
       const message =
         uploadError instanceof Error ? uploadError.message : "未知错误";
@@ -97,32 +193,92 @@ export default function HomePage() {
     }
   }
 
+  async function handleCompare(
+    fileA: File,
+    sheetA: string | null,
+    fileB: File,
+    sheetB: string | null,
+  ) {
+    if (!validatePreferences()) return;
+
+    const chartTypes = normalizeSelectedChartTypes(selectedChartTypes);
+
+    setLoading(true);
+    setError(null);
+    setPrefHint(null);
+    setHistoryNotice(null);
+    setResult(null);
+
+    try {
+      const data = await compareFiles(fileA, fileB, {
+        usePreferences,
+        preferences: toPreferencePayloads(selectedPreferences),
+        chartTypes,
+        sheetA,
+        sheetB,
+      });
+      setCompareResult(data);
+      setLastUsedPreferences(Boolean(data.analysis.used_preferences));
+      if (getAuth()?.token) {
+        try {
+          await saveHistory(data, `对比 ${fileA.name} vs ${fileB.name}`);
+          setHistoryNotice("对比结果已保存到分析历史");
+        } catch {
+          setHistoryNotice("对比完成，但保存历史失败（可稍后重试登录状态）");
+        }
+      }
+    } catch (compareError) {
+      const message =
+        compareError instanceof Error ? compareError.message : "未知错误";
+      setError(message);
+      setCompareResult(null);
+      setLastUsedPreferences(false);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-4 py-10 sm:px-6">
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-blue-600">阶段 3 · AI 智能分析</p>
+          <p className="text-sm font-medium text-blue-600">阶段 4 · 多文件场景</p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
             数据分析 Agent
           </h1>
           <p className="mt-3 max-w-2xl text-slate-600">
-            上传 CSV 或 Excel：先读取偏好约束并改写分析口径，再生成报告与指标/图表。
-            如「订单数按 80%」「销售额按 120%」会真实作用于可视化数字。
+            支持 Excel 多 Sheet 选择，以及双文件对比。分析完成后可导出并自动保存历史。
+            偏好库会同步到云端。
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setLibraryOpen(true)}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-        >
-          偏好库
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            偏好库
+          </button>
+          <AuthBar />
+        </div>
       </header>
 
-      <FileUpload onUpload={handleUpload} loading={loading} />
+      <DataSourcePanel
+        mode={mode}
+        onModeChange={handleModeChange}
+        loading={loading}
+        onAnalyze={handleAnalyze}
+        onCompare={handleCompare}
+      />
+
+      <ChartTypeSelector
+        selected={selectedChartTypes}
+        onChange={setSelectedChartTypes}
+      />
 
       <PreferenceSelector
         preferences={preferences}
+        groups={groups}
         usePreferences={usePreferences}
         selectedIds={selectedIds}
         onUsePreferencesChange={handleUsePreferencesChange}
@@ -140,12 +296,25 @@ export default function HomePage() {
         </div>
       )}
 
+      {historyNotice && (
+        <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          {historyNotice}
+        </div>
+      )}
+
       {result && (
         <section className="mt-8 space-y-8">
           <div className="grid gap-4 sm:grid-cols-3">
             <StatCard label="文件名" value={result.overview.filename} />
             <StatCard label="行数" value={String(result.overview.rows)} />
-            <StatCard label="列数" value={String(result.overview.columns)} />
+            <StatCard
+              label={result.overview.sheet_name ? "工作表 / 列数" : "列数"}
+              value={
+                result.overview.sheet_name
+                  ? `${result.overview.sheet_name} · ${result.overview.columns}`
+                  : String(result.overview.columns)
+              }
+            />
           </div>
 
           {result.pipeline && (
@@ -173,6 +342,18 @@ export default function HomePage() {
                       .join("、")}
                   </p>
                 )}
+              {result.pipeline.chart_types &&
+                result.pipeline.chart_types.length > 0 && (
+                  <p className="mt-1 opacity-90">
+                    勾选图型：
+                    {result.pipeline.chart_types
+                      .map(
+                        (type) =>
+                          CHART_TYPE_LABELS[type as ChartTypeOption] ?? type,
+                      )
+                      .join("、")}
+                  </p>
+                )}
               {result.pipeline.mode === "ai_plan" &&
                 result.pipeline.scenario && (
                   <p className="mt-1 opacity-90">
@@ -184,6 +365,8 @@ export default function HomePage() {
                 )}
             </div>
           )}
+
+          <ExportButtons result={result} />
 
           <AnalysisReport analysis={result.analysis} />
 
@@ -200,7 +383,7 @@ export default function HomePage() {
               </h2>
               <div className="grid gap-6 lg:grid-cols-2">
                 {result.charts.map((chart) => (
-                  <ChartPanel key={chart.title} chart={chart} />
+                  <ChartPanel key={`${chart.type}-${chart.title}`} chart={chart} />
                 ))}
               </div>
             </section>
@@ -270,10 +453,12 @@ export default function HomePage() {
         </section>
       )}
 
+      {compareResult && <CompareResultView result={compareResult} />}
+
       <PreferenceLibrary
         open={libraryOpen}
         onClose={() => setLibraryOpen(false)}
-        onChange={handlePreferencesChange}
+        onChange={handleLibraryChange}
       />
     </main>
   );

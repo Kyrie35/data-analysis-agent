@@ -6,6 +6,7 @@ import httpx
 import pandas as pd
 
 from services.analysis_plan import extract_json_object, validate_plan
+from services.chart_types import normalize_chart_types
 from services.data_query import dataframe_schema, run_query
 from services.preferences import format_preferences_block, normalize_preferences
 from services.session_store import get_session
@@ -221,12 +222,15 @@ def generate_analysis_plan(
     overview: dict[str, Any],
     use_preferences: bool = False,
     preferences: list[dict[str, Any]] | None = None,
+    chart_types: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return {status, plan, message, model, used_preferences}."""
     normalized = normalize_preferences(use_preferences, preferences)
     used_preferences = bool(normalized)
     preferences_block = format_preferences_block(normalized)
     preference_section = f"\n\n{preferences_block}\n" if preferences_block else "\n"
+    allowed_chart_types = normalize_chart_types(chart_types)
+    allowed_types_text = ", ".join(allowed_chart_types)
 
     schema = dataframe_schema(df, overview.get("column_types") or {})
     preference_rules = ""
@@ -246,6 +250,7 @@ def generate_analysis_plan(
 {preference_section}
 {preference_rules}
 可用列必须从 schema.columns[].name 中选择，禁止虚构列名。
+用户勾选的图表类型（charts.type 只能从中选择）：[{allowed_types_text}]
 
 JSON 结构：
 {{
@@ -262,7 +267,8 @@ JSON 结构：
   ],
   "charts": [
     {{"type": "line", "title": "销售额月度趋势(偏好口径)", "x": "日期", "y": "销售额", "grain": "month", "agg": "sum"}},
-    {{"type": "bar", "title": "各地区销售额(偏好口径)", "x": "地区", "y": "销售额", "agg": "sum", "top_n": 10}}
+    {{"type": "bar", "title": "各地区销售额(偏好口径)", "x": "地区", "y": "销售额", "agg": "sum", "top_n": 10}},
+    {{"type": "pie", "title": "地区销售额占比", "x": "地区", "y": "销售额", "agg": "sum", "top_n": 8}}
   ]
 }}
 
@@ -270,8 +276,8 @@ JSON 结构：
 1. transforms.op 仅限：multiply, divide, add, subtract；factor 必须是数字
 2. metrics 最多 8 个；charts 最多 3 个
 3. metric.op 仅限：sum, mean, count, min, max, median, nunique, top_category, missing, row_count
-4. chart.type 仅限：line, bar, histogram
-5. line 的 x 尽量选日期列；bar 的 x 选分类列；y 选数值列
+4. chart.type 仅限用户勾选：{allowed_types_text}；不要输出未勾选类型
+5. line 的 x 尽量选日期列；bar/pie 的 x 选分类列；y 选数值列；histogram 只需 y
 6. 启用偏好时，凡涉及百分比/倍率/加减口径的偏好都必须进入 transforms
 7. 只输出一个 JSON 对象
 
@@ -288,6 +294,7 @@ schema：
                 "content": (
                     "你是数据分析规划助手。必须先消化用户偏好约束，再输出 JSON。"
                     "偏好中的计算口径必须写入 transforms，列名必须来自 schema。"
+                    "图表类型必须遵守用户勾选集合。"
                 ),
             },
             {"role": "user", "content": prompt},
@@ -300,7 +307,7 @@ schema：
         return result
 
     raw_plan = extract_json_object(result["content"])
-    plan = validate_plan(raw_plan, df)
+    plan = validate_plan(raw_plan, df, allowed_chart_types=set(allowed_chart_types))
     if plan is None:
         return {
             "status": "error",
@@ -534,3 +541,60 @@ def _generate_chat_with_dataframe(
         "used_preferences": used_preferences,
         "used_raw_data": True,
     }
+
+
+def generate_compare_analysis(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    deltas: list[dict[str, Any]],
+    use_preferences: bool = False,
+    preferences: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    normalized = normalize_preferences(use_preferences, preferences)
+    used_preferences = bool(normalized)
+    preferences_block = format_preferences_block(normalized)
+    preference_section = f"\n\n{preferences_block}\n" if preferences_block else "\n"
+
+    context = {
+        "left": {
+            "filename": left.get("filename"),
+            "sheet_name": left.get("sheet_name"),
+            "rows": left.get("rows"),
+            "metrics": left.get("metrics"),
+        },
+        "right": {
+            "filename": right.get("filename"),
+            "sheet_name": right.get("sheet_name"),
+            "rows": right.get("rows"),
+            "metrics": right.get("metrics"),
+        },
+        "metric_deltas": deltas[:20],
+        "applied_transforms": left.get("applied_transforms") or [],
+    }
+
+    prompt = f"""你是数据分析师。下面是两份表格（左=文件A/本期，右=文件B/对比期）在相同口径下的指标对比。
+请用中文写一份简洁对比报告。
+{preference_section}
+要求：
+1. 先说明两份数据分别是什么
+2. 总结 3-5 个关键差异（必须引用下方 delta 数字，不要编造）
+3. 指出可能的原因或风险（如有）
+4. 给出 2-3 条行动建议
+5. 使用 Markdown，含「对比概览」「关键差异」「关注事项」「建议」四节
+6. 总字数 300-500 字
+
+对比数据（JSON）：
+{json.dumps(context, ensure_ascii=False, indent=2)}
+"""
+
+    result = _call_deepseek(
+        [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {"role": "user", "content": prompt},
+        ]
+    )
+    result["used_preferences"] = used_preferences
+    return result

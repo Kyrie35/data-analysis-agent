@@ -4,28 +4,42 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   MAX_CONTENT_LENGTH,
+  MAX_GROUP_NAME_LENGTH,
+  MAX_GROUPS,
   MAX_PREFERENCES,
   MAX_TITLE_LENGTH,
+  createGroup,
   createPreference,
+  filterPreferencesByGroup,
   filterPreferencesByTitle,
+  getGroupName,
+  loadGroups,
   loadPreferences,
+  saveGroups,
   savePreferences,
+  type PreferenceGroup,
   type PreferenceItem,
 } from "@/lib/preferences";
 
 type PreferenceLibraryProps = {
   open: boolean;
   onClose: () => void;
-  onChange?: (items: PreferenceItem[]) => void;
+  onChange?: (items: PreferenceItem[], groups: PreferenceGroup[]) => void;
 };
 
 type Draft = {
   title: string;
   content: string;
   enabled: boolean;
+  groupId: string | null;
 };
 
-const emptyDraft: Draft = { title: "", content: "", enabled: true };
+const emptyDraft: Draft = {
+  title: "",
+  content: "",
+  enabled: true,
+  groupId: null,
+};
 
 export default function PreferenceLibrary({
   open,
@@ -33,29 +47,43 @@ export default function PreferenceLibrary({
   onChange,
 }: PreferenceLibraryProps) {
   const [items, setItems] = useState<PreferenceItem[]>([]);
+  const [groups, setGroups] = useState<PreferenceGroup[]>([]);
   const [titleQuery, setTitleQuery] = useState("");
+  const [groupFilter, setGroupFilter] = useState<string | "all" | "ungrouped">(
+    "all",
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [newGroupName, setNewGroupName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const filteredItems = useMemo(
-    () => filterPreferencesByTitle(items, titleQuery),
-    [items, titleQuery],
-  );
+  const filteredItems = useMemo(() => {
+    const byGroup = filterPreferencesByGroup(items, groupFilter);
+    return filterPreferencesByTitle(byGroup, titleQuery);
+  }, [items, groupFilter, titleQuery]);
 
   useEffect(() => {
     if (!open) return;
     setItems(loadPreferences());
+    setGroups(loadGroups());
     setTitleQuery("");
+    setGroupFilter("all");
     setEditingId(null);
     setDraft(emptyDraft);
+    setNewGroupName("");
     setError(null);
   }, [open]);
 
-  function persist(next: PreferenceItem[]) {
+  function persistItems(next: PreferenceItem[]) {
     savePreferences(next);
     setItems(next);
-    onChange?.(next);
+    onChange?.(next, groups);
+  }
+
+  function persistGroups(next: PreferenceGroup[]) {
+    saveGroups(next);
+    setGroups(next);
+    onChange?.(items, next);
   }
 
   function startCreate() {
@@ -64,7 +92,10 @@ export default function PreferenceLibrary({
       return;
     }
     setEditingId("new");
-    setDraft(emptyDraft);
+    setDraft({
+      ...emptyDraft,
+      groupId: groupFilter !== "all" && groupFilter !== "ungrouped" ? groupFilter : null,
+    });
     setError(null);
   }
 
@@ -74,6 +105,7 @@ export default function PreferenceLibrary({
       title: item.title,
       content: item.content,
       enabled: item.enabled,
+      groupId: item.groupId,
     });
     setError(null);
   }
@@ -93,10 +125,15 @@ export default function PreferenceLibrary({
     }
 
     if (editingId === "new") {
-      const created = createPreference(title, content, draft.enabled);
-      persist([created, ...items]);
+      const created = createPreference(
+        title,
+        content,
+        draft.enabled,
+        draft.groupId,
+      );
+      persistItems([created, ...items]);
     } else if (editingId) {
-      persist(
+      persistItems(
         items.map((item) =>
           item.id === editingId
             ? {
@@ -104,6 +141,7 @@ export default function PreferenceLibrary({
                 title: title.slice(0, MAX_TITLE_LENGTH) || "未命名偏好",
                 content: content.slice(0, MAX_CONTENT_LENGTH),
                 enabled: draft.enabled,
+                groupId: draft.groupId,
                 updatedAt: new Date().toISOString(),
               }
             : item,
@@ -115,12 +153,12 @@ export default function PreferenceLibrary({
   }
 
   function removeItem(id: string) {
-    persist(items.filter((item) => item.id !== id));
+    persistItems(items.filter((item) => item.id !== id));
     if (editingId === id) cancelEdit();
   }
 
   function toggleEnabled(id: string) {
-    persist(
+    persistItems(
       items.map((item) =>
         item.id === id
           ? {
@@ -131,6 +169,58 @@ export default function PreferenceLibrary({
           : item,
       ),
     );
+  }
+
+  function addGroup() {
+    const name = newGroupName.trim();
+    if (!name) {
+      setError("请输入分组名称");
+      return;
+    }
+    if (groups.length >= MAX_GROUPS) {
+      setError(`最多 ${MAX_GROUPS} 个分组`);
+      return;
+    }
+    const created = createGroup(name);
+    persistGroups([created, ...groups]);
+    setNewGroupName("");
+    setError(null);
+  }
+
+  function renameGroup(id: string) {
+    const current = groups.find((group) => group.id === id);
+    if (!current) return;
+    const name = window.prompt("重命名分组", current.name)?.trim();
+    if (!name) return;
+    persistGroups(
+      groups.map((group) =>
+        group.id === id
+          ? {
+              ...group,
+              name: name.slice(0, MAX_GROUP_NAME_LENGTH),
+              updatedAt: new Date().toISOString(),
+            }
+          : group,
+      ),
+    );
+  }
+
+  function deleteGroup(id: string) {
+    if (!window.confirm("删除分组后，组内偏好将变为「未分组」，确定吗？")) {
+      return;
+    }
+    const nextGroups = groups.filter((group) => group.id !== id);
+    const nextItems = items.map((item) =>
+      item.groupId === id
+        ? { ...item, groupId: null, updatedAt: new Date().toISOString() }
+        : item,
+    );
+    saveGroups(nextGroups);
+    savePreferences(nextItems);
+    setGroups(nextGroups);
+    setItems(nextItems);
+    onChange?.(nextItems, nextGroups);
+    if (groupFilter === id) setGroupFilter("all");
   }
 
   if (!open) return null;
@@ -148,7 +238,7 @@ export default function PreferenceLibrary({
           <div>
             <h2 className="text-lg font-semibold text-slate-900">偏好库</h2>
             <p className="mt-1 text-sm text-slate-500">
-              保存在本浏览器本地。启用后可作为个人分析视角注入 AI。
+              支持分组管理。启用后可作为分析口径约束注入 AI。
             </p>
           </div>
           <button
@@ -167,18 +257,82 @@ export default function PreferenceLibrary({
             </p>
           )}
 
+          <section className="space-y-2 rounded-xl border border-slate-200 p-3">
+            <h3 className="text-sm font-medium text-slate-800">分组</h3>
+            <div className="flex gap-2">
+              <input
+                value={newGroupName}
+                maxLength={MAX_GROUP_NAME_LENGTH}
+                onChange={(event) => setNewGroupName(event.target.value)}
+                placeholder="新分组名称"
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={addGroup}
+                className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700"
+              >
+                添加
+              </button>
+            </div>
+            <ul className="space-y-1">
+              {groups.map((group) => (
+                <li
+                  key={group.id}
+                  className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1.5 text-sm"
+                >
+                  <span className="truncate text-slate-700">{group.name}</span>
+                  <span className="shrink-0 space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => renameGroup(group.id)}
+                      className="text-xs text-blue-600"
+                    >
+                      重命名
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteGroup(group.id)}
+                      className="text-xs text-red-600"
+                    >
+                      删除
+                    </button>
+                  </span>
+                </li>
+              ))}
+              {groups.length === 0 && (
+                <li className="text-xs text-slate-500">暂无分组</li>
+              )}
+            </ul>
+          </section>
+
           {items.length > 0 && (
-            <div>
+            <div className="space-y-2">
               <input
                 value={titleQuery}
                 onChange={(event) => setTitleQuery(event.target.value)}
                 placeholder="按标题搜索偏好…"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
               />
-              <p className="mt-1.5 text-xs text-slate-500">
-                {titleQuery.trim()
-                  ? `找到 ${filteredItems.length} / ${items.length} 条`
-                  : `共 ${items.length} 条偏好`}
+              <select
+                value={groupFilter}
+                onChange={(event) =>
+                  setGroupFilter(
+                    event.target.value as string | "all" | "ungrouped",
+                  )
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="all">全部分组</option>
+                <option value="ungrouped">未分组</option>
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">
+                显示 {filteredItems.length} / {items.length} 条
               </p>
             </div>
           )}
@@ -204,6 +358,23 @@ export default function PreferenceLibrary({
                 rows={5}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
               />
+              <select
+                value={draft.groupId ?? ""}
+                onChange={(event) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    groupId: event.target.value || null,
+                  }))
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="">未分组</option>
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
@@ -251,9 +422,7 @@ export default function PreferenceLibrary({
           )}
 
           {items.length > 0 && filteredItems.length === 0 && (
-            <p className="text-sm text-slate-500">
-              没有标题匹配「{titleQuery.trim()}」的偏好。
-            </p>
+            <p className="text-sm text-slate-500">当前筛选下没有匹配的偏好。</p>
           )}
 
           <ul className="space-y-3">
@@ -264,9 +433,14 @@ export default function PreferenceLibrary({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="truncate font-medium text-slate-900">
-                      {item.title}
-                    </h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate font-medium text-slate-900">
+                        {item.title}
+                      </h3>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                        {getGroupName(groups, item.groupId)}
+                      </span>
+                    </div>
                     <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">
                       {item.content}
                     </p>

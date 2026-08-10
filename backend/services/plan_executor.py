@@ -133,6 +133,18 @@ def _execute_chart(df: pd.DataFrame, item: dict[str, Any]) -> dict[str, Any] | N
                 title,
                 item.get("agg", "sum"),
                 int(item.get("top_n", 10)),
+                chart_type="bar",
+            )
+
+        if chart_type == "pie":
+            return _bar(
+                df,
+                item["x"],
+                item["y"],
+                title,
+                item.get("agg", "sum"),
+                int(item.get("top_n", 8)),
+                chart_type="pie",
             )
     except Exception:
         return None
@@ -197,6 +209,7 @@ def _bar(
     title: str,
     agg: str,
     top_n: int,
+    chart_type: str = "bar",
 ) -> dict[str, Any] | None:
     subset = df[[x, y]].dropna().copy()
     if subset.empty:
@@ -211,7 +224,7 @@ def _bar(
     if not rows:
         return None
     return {
-        "type": "bar",
+        "type": chart_type if chart_type in {"bar", "pie"} else "bar",
         "title": title,
         "x_key": "label",
         "y_key": "value",
@@ -238,7 +251,7 @@ def _histogram(df: pd.DataFrame, y: str, title: str) -> dict[str, Any] | None:
     if not data:
         return None
     return {
-        "type": "bar",
+        "type": "histogram",
         "title": title,
         "x_key": "label",
         "y_key": "value",

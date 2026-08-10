@@ -2,14 +2,17 @@
 
 import { useMemo, useState } from "react";
 
-import type { PreferenceItem } from "@/lib/preferences";
+import type { PreferenceGroup, PreferenceItem } from "@/lib/preferences";
 import {
   MAX_PREFERENCES_PER_REQUEST,
+  filterPreferencesByGroup,
   filterPreferencesByTitle,
+  getGroupName,
 } from "@/lib/preferences";
 
 type PreferenceSelectorProps = {
   preferences: PreferenceItem[];
+  groups: PreferenceGroup[];
   usePreferences: boolean;
   selectedIds: string[];
   onUsePreferencesChange: (value: boolean) => void;
@@ -20,6 +23,7 @@ type PreferenceSelectorProps = {
 
 export default function PreferenceSelector({
   preferences,
+  groups,
   usePreferences,
   selectedIds,
   onUsePreferencesChange,
@@ -28,11 +32,14 @@ export default function PreferenceSelector({
   hint,
 }: PreferenceSelectorProps) {
   const [titleQuery, setTitleQuery] = useState("");
-
-  const filteredPreferences = useMemo(
-    () => filterPreferencesByTitle(preferences, titleQuery),
-    [preferences, titleQuery],
+  const [groupFilter, setGroupFilter] = useState<string | "all" | "ungrouped">(
+    "all",
   );
+
+  const filteredPreferences = useMemo(() => {
+    const byGroup = filterPreferencesByGroup(preferences, groupFilter);
+    return filterPreferencesByTitle(byGroup, titleQuery);
+  }, [preferences, groupFilter, titleQuery]);
 
   function toggleId(id: string) {
     if (selectedIds.includes(id)) {
@@ -41,6 +48,17 @@ export default function PreferenceSelector({
     }
     if (selectedIds.length >= MAX_PREFERENCES_PER_REQUEST) return;
     onSelectedIdsChange([...selectedIds, id]);
+  }
+
+  function selectVisibleGroup() {
+    const visibleIds = filteredPreferences.map((item) => item.id);
+    const merged = [...selectedIds];
+    for (const id of visibleIds) {
+      if (merged.includes(id)) continue;
+      if (merged.length >= MAX_PREFERENCES_PER_REQUEST) break;
+      merged.push(id);
+    }
+    onSelectedIdsChange(merged);
   }
 
   return (
@@ -82,23 +100,47 @@ export default function PreferenceSelector({
             </p>
           ) : (
             <>
-              <input
-                value={titleQuery}
-                onChange={(event) => setTitleQuery(event.target.value)}
-                placeholder="按标题搜索偏好…"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-              />
-              <p className="text-xs text-slate-500">
-                单次最多选择 {MAX_PREFERENCES_PER_REQUEST} 条（已选{" "}
-                {selectedIds.length}）
-                {titleQuery.trim()
-                  ? ` · 显示 ${filteredPreferences.length} / ${preferences.length}`
-                  : ""}
-              </p>
-              {filteredPreferences.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  没有标题匹配「{titleQuery.trim()}」的偏好。
+              <div className="grid gap-2 sm:grid-cols-2">
+                <input
+                  value={titleQuery}
+                  onChange={(event) => setTitleQuery(event.target.value)}
+                  placeholder="按标题搜索偏好…"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+                <select
+                  value={groupFilter}
+                  onChange={(event) =>
+                    setGroupFilter(
+                      event.target.value as string | "all" | "ungrouped",
+                    )
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="all">全部分组</option>
+                  <option value="ungrouped">未分组</option>
+                  {groups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-slate-500">
+                  单次最多选择 {MAX_PREFERENCES_PER_REQUEST} 条（已选{" "}
+                  {selectedIds.length}）· 显示 {filteredPreferences.length} /{" "}
+                  {preferences.length}
                 </p>
+                <button
+                  type="button"
+                  onClick={selectVisibleGroup}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                >
+                  全选当前筛选（至上限）
+                </button>
+              </div>
+              {filteredPreferences.length === 0 ? (
+                <p className="text-sm text-slate-500">当前筛选下没有偏好。</p>
               ) : (
                 <ul className="max-h-64 space-y-2 overflow-y-auto">
                   {filteredPreferences.map((item) => {
@@ -123,8 +165,13 @@ export default function PreferenceSelector({
                             onChange={() => toggleId(item.id)}
                           />
                           <span>
-                            <span className="font-medium text-slate-800">
-                              {item.title}
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium text-slate-800">
+                                {item.title}
+                              </span>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-xs text-slate-500">
+                                {getGroupName(groups, item.groupId)}
+                              </span>
                             </span>
                             <span className="mt-0.5 block text-xs text-slate-500 line-clamp-2">
                               {item.content}

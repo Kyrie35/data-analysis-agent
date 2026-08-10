@@ -1,5 +1,6 @@
 # Python
 backend/.venv/
+backend/data/*.db
 __pycache__/
 *.py[cod]
 .env
