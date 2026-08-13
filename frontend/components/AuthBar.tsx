@@ -12,6 +12,12 @@ export default function AuthBar() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Link
+        href="/nl2sql"
+        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+      >
+        智能取数
+      </Link>
+      <Link
         href="/history"
         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
       >

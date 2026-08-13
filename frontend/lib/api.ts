@@ -290,3 +290,188 @@ export async function chatAboutAnalysis(input: {
 
   return response.json() as Promise<ChatResponse>;
 }
+
+export type Nl2sqlStatus = {
+  module: string;
+  phase: string;
+  ready_for_query: boolean;
+  message: string;
+  analytics_db_configured: boolean;
+  analytics_db_connected?: boolean;
+  analytics_db_error?: string | null;
+  table_whitelist: string[];
+  max_rows: number;
+  preview_rows?: number;
+  query_timeout_seconds: number;
+};
+
+export type Nl2sqlColumn = {
+  name: string;
+  type: string;
+  nullable: boolean;
+  key: string;
+  comment: string;
+};
+
+export type Nl2sqlTable = {
+  name: string;
+  comment: string;
+  columns: Nl2sqlColumn[];
+};
+
+export type Nl2sqlSchemaCatalog = {
+  database: string;
+  tables: Nl2sqlTable[];
+  missing_tables: string[];
+  whitelist: string[];
+};
+
+export type Nl2sqlQueryResult = {
+  columns: string[];
+  rows: Record<string, string | number | boolean | null>[];
+  row_count: number;
+  truncated: boolean;
+  limit: number;
+  executed_sql: string;
+};
+
+export type Nl2sqlGenerateResult = {
+  status: "ok" | "clarify" | "refuse" | "invalid_sql" | "error";
+  sql: string | null;
+  explanation: string;
+  assumptions: string[];
+  clarifying_question: string;
+  model?: string | null;
+  validation_error?: string | null;
+  raw_content?: string;
+};
+
+export async function getNl2sqlStatus(): Promise<Nl2sqlStatus> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/status`);
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "获取取数模块状态失败"));
+  }
+
+  return response.json() as Promise<Nl2sqlStatus>;
+}
+
+export async function getNl2sqlSchema(): Promise<Nl2sqlSchemaCatalog> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/schema`);
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "获取业务库 schema 失败"));
+  }
+
+  return response.json() as Promise<Nl2sqlSchemaCatalog>;
+}
+
+export async function runNl2sqlQuery(
+  sql: string,
+  previewLimit?: number,
+): Promise<Nl2sqlQueryResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sql,
+        preview_limit: previewLimit,
+      }),
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "查询执行失败"));
+  }
+
+  return response.json() as Promise<Nl2sqlQueryResult>;
+}
+
+export async function generateNl2sql(question: string): Promise<Nl2sqlGenerateResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "SQL 生成失败"));
+  }
+
+  return response.json() as Promise<Nl2sqlGenerateResult>;
+}
+
+export async function downloadNl2sqlCsv(sql: string): Promise<{
+  rowCount: number;
+  truncated: boolean;
+}> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/export.csv`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sql }),
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await parseErrorMessage(response, "CSV 导出失败");
+    if (detail.includes("超时") || detail.toLowerCase().includes("timeout")) {
+      throw new Error(`导出超时：${detail}`);
+    }
+    if (response.status === 400) {
+      throw new Error(`SQL 未通过校验，无法导出：${detail}`);
+    }
+    throw new Error(detail);
+  }
+
+  const rowCount = Number(response.headers.get("X-NL2SQL-Row-Count") ?? "0");
+  const truncated = response.headers.get("X-NL2SQL-Truncated") === "1";
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const matched = /filename="([^"]+)"/.exec(disposition);
+  const filename = matched?.[1] ?? `nl2sql_export_${Date.now()}.csv`;
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+
+  return { rowCount, truncated };
+}

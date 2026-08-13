@@ -8,6 +8,7 @@ from routers.analyze import router as analyze_router
 from routers.auth import router as auth_router
 from routers.chat import router as chat_router
 from routers.history import router as history_router
+from routers.nl2sql import router as nl2sql_router
 from routers.preferences import router as preferences_router
 from services.db import init_db
 
@@ -36,6 +37,7 @@ app.include_router(chat_router)
 app.include_router(auth_router)
 app.include_router(history_router)
 app.include_router(preferences_router)
+app.include_router(nl2sql_router)
 
 
 @app.on_event("startup")
