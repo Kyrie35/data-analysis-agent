@@ -27,7 +27,7 @@ function buildMarkdown(result: AnalyzeResponse): string {
   const pipeline = result.pipeline;
   const transforms = pipeline?.applied_transforms ?? [];
 
-  lines.push(`# 数据分析报告`);
+  lines.push(`# 表报分析报告`);
   lines.push("");
   lines.push(`- 文件：${result.overview.filename}`);
   lines.push(`- 行数：${result.overview.rows}`);

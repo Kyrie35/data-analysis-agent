@@ -34,12 +34,12 @@ export default function AuthScreen() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
       <div className="mb-8 text-center">
-        <p className="text-sm font-medium text-blue-600">数据分析 Agent</p>
+        <p className="text-sm font-medium text-blue-600">数航助手 DataPilot</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
           {mode === "login" ? "登录后继续" : "创建账号"}
         </h1>
         <p className="mt-3 text-sm text-slate-600">
-          登录后可上传分析、保存历史，并同步偏好库。
+          登录后可使用表报生成、语义取数，保存历史任务，并同步偏好库。
         </p>
       </div>
 

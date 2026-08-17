@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 
 import AnalysisReport from "@/components/AnalysisReport";
-import AuthBar from "@/components/AuthBar";
 import ChartPanel from "@/components/ChartPanel";
 import ChartTypeSelector from "@/components/ChartTypeSelector";
 import ChatPanel from "@/components/ChatPanel";
@@ -65,9 +64,9 @@ export default function HomePage() {
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    const loaded = loadPreferences();
+    const loaded = loadPreferences("report");
     setPreferences(loaded);
-    setGroups(loadGroups());
+    setGroups(loadGroups("report"));
     setSelectedIds(loaded.filter((item) => item.enabled).map((item) => item.id));
 
     const restored = takeHistoryResult<AnalyzeResponse | CompareResponse>();
@@ -104,7 +103,12 @@ export default function HomePage() {
   ) {
     if (!getAuth()?.token) return;
     try {
-      await pushCloudPreferences({ preferences: items, groups: nextGroups });
+      await pushCloudPreferences({
+        preferences: items,
+        groups: nextGroups,
+        query_preferences: loadPreferences("query"),
+        query_groups: loadGroups("query"),
+      });
     } catch {
       // ignore sync errors for local editing
     }
@@ -133,7 +137,7 @@ export default function HomePage() {
     setUsePreferences(value);
     setPrefHint(null);
     if (value && preferences.length === 0) {
-      setPrefHint("偏好库为空，请先添加偏好后再启用。");
+      setPrefHint("表报偏好为空，请先添加后再启用。");
     }
   }
 
@@ -177,7 +181,7 @@ export default function HomePage() {
       if (getAuth()?.token) {
         try {
           await saveHistory(data);
-          setHistoryNotice("已保存到分析历史");
+          setHistoryNotice("已保存到历史任务");
         } catch {
           setHistoryNotice("分析完成，但保存历史失败（可稍后重试登录状态）");
         }
@@ -222,7 +226,7 @@ export default function HomePage() {
       if (getAuth()?.token) {
         try {
           await saveHistory(data, `对比 ${fileA.name} vs ${fileB.name}`);
-          setHistoryNotice("对比结果已保存到分析历史");
+          setHistoryNotice("对比结果已保存到历史任务");
         } catch {
           setHistoryNotice("对比完成，但保存历史失败（可稍后重试登录状态）");
         }
@@ -239,28 +243,25 @@ export default function HomePage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-6xl px-4 py-10 sm:px-6">
+    <div>
       <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-blue-600">阶段 4 · 多文件场景</p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
-            数据分析 Agent
+            表报生成
           </h1>
           <p className="mt-3 max-w-2xl text-slate-600">
             支持 Excel 多 Sheet 选择，以及双文件对比。分析完成后可导出并自动保存历史。
-            偏好库会同步到云端。
+            偏好库中的表报偏好、取数偏好会分别同步到云端。
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setLibraryOpen(true)}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            偏好库
-          </button>
-          <AuthBar />
-        </div>
+        <button
+          type="button"
+          onClick={() => setLibraryOpen(true)}
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          表报偏好
+        </button>
       </header>
 
       <DataSourcePanel
@@ -288,6 +289,10 @@ export default function HomePage() {
         }}
         onOpenLibrary={() => setLibraryOpen(true)}
         hint={prefHint}
+        enableLabel="启用表报偏好"
+        manageLabel="管理表报偏好"
+        helpText="表报偏好与取数偏好相互独立。启用后会作为分析口径约束注入报告生成。"
+        emptyText="表报偏好为空，请先添加后再启用。"
       />
 
       {error && (
@@ -459,8 +464,9 @@ export default function HomePage() {
         open={libraryOpen}
         onClose={() => setLibraryOpen(false)}
         onChange={handleLibraryChange}
+        scope="report"
       />
-    </main>
+    </div>
   );
 }
 

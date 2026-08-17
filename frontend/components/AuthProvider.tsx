@@ -39,24 +39,45 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function syncPreferencesAfterLogin(): Promise<void> {
-  const localPrefs = loadPreferences();
-  const localGroups = loadGroups();
-  const cloud = await fetchCloudPreferences();
-  const cloudPrefs = Array.isArray(cloud.preferences) ? cloud.preferences : [];
-  const cloudGroups = Array.isArray(cloud.groups) ? cloud.groups : [];
+  const localReportPrefs = loadPreferences("report");
+  const localReportGroups = loadGroups("report");
+  const localQueryPrefs = loadPreferences("query");
+  const localQueryGroups = loadGroups("query");
 
-  if (cloudPrefs.length === 0 && cloudGroups.length === 0) {
-    if (localPrefs.length > 0 || localGroups.length > 0) {
+  const cloud = await fetchCloudPreferences();
+  const cloudReportPrefs = cloud.preferences;
+  const cloudReportGroups = cloud.groups;
+  const cloudQueryPrefs = cloud.query_preferences;
+  const cloudQueryGroups = cloud.query_groups;
+
+  const cloudEmpty =
+    cloudReportPrefs.length === 0 &&
+    cloudReportGroups.length === 0 &&
+    cloudQueryPrefs.length === 0 &&
+    cloudQueryGroups.length === 0;
+
+  const localHasAny =
+    localReportPrefs.length > 0 ||
+    localReportGroups.length > 0 ||
+    localQueryPrefs.length > 0 ||
+    localQueryGroups.length > 0;
+
+  if (cloudEmpty) {
+    if (localHasAny) {
       await pushCloudPreferences({
-        preferences: localPrefs,
-        groups: localGroups,
+        preferences: localReportPrefs,
+        groups: localReportGroups,
+        query_preferences: localQueryPrefs,
+        query_groups: localQueryGroups,
       });
     }
     return;
   }
 
-  savePreferences(cloudPrefs as PreferenceItem[]);
-  saveGroups(cloudGroups as PreferenceGroup[]);
+  savePreferences(cloudReportPrefs as PreferenceItem[], "report");
+  saveGroups(cloudReportGroups as PreferenceGroup[], "report");
+  savePreferences(cloudQueryPrefs as PreferenceItem[], "query");
+  saveGroups(cloudQueryGroups as PreferenceGroup[], "query");
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

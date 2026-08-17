@@ -4,8 +4,8 @@ import AppShell from "@/components/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "数据分析 Agent",
-  description: "上传 CSV / Excel，自动解析数据结构与预览",
+  title: "数航助手 DataPilot",
+  description: "上传表格生成报告，或用自然语言取数导出 CSV",
 };
 
 export default function RootLayout({

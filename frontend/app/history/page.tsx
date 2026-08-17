@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -51,20 +50,13 @@ export default function HistoryPage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-4xl px-4 py-10 sm:px-6">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">分析历史</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            打开历史会恢复报告与图表；追问需重新上传文件（会话不持久）。
-          </p>
-        </div>
-        <Link
-          href="/"
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          返回分析
-        </Link>
+    <div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-900">历史任务</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          打开任务会恢复报告与图表；追问需重新上传文件（会话不持久）。
+          语义取数的导出记录在左侧「语义取数」页底部查看。
+        </p>
       </div>
 
       {loading && <p className="text-sm text-slate-500">加载中…</p>}
@@ -75,7 +67,7 @@ export default function HistoryPage() {
       )}
 
       {!loading && items.length === 0 && (
-        <p className="text-sm text-slate-500">暂无历史。完成一次分析会自动保存。</p>
+        <p className="text-sm text-slate-500">暂无历史任务。完成一次表报生成会自动保存。</p>
       )}
 
       <ul className="space-y-3">
@@ -115,6 +107,6 @@ export default function HistoryPage() {
           </li>
         ))}
       </ul>
-    </main>
+    </div>
   );
 }

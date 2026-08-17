@@ -1,4 +1,5 @@
 import type { ChartTypeOption } from "@/lib/chartTypes";
+import { authHeaders } from "@/lib/auth";
 import type { PreferencePayload } from "@/lib/preferences";
 
 export type AnalyzeOverview = {
@@ -407,13 +408,23 @@ export async function runNl2sqlQuery(
   return response.json() as Promise<Nl2sqlQueryResult>;
 }
 
-export async function generateNl2sql(question: string): Promise<Nl2sqlGenerateResult> {
+export async function generateNl2sql(
+  question: string,
+  options?: {
+    usePreferences?: boolean;
+    preferences?: PreferencePayload[];
+  },
+): Promise<Nl2sqlGenerateResult> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}/api/nl2sql/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        question,
+        use_preferences: Boolean(options?.usePreferences),
+        preferences: options?.preferences ?? [],
+      }),
     });
   } catch {
     throw new Error(
@@ -474,4 +485,108 @@ export async function downloadNl2sqlCsv(sql: string): Promise<{
   URL.revokeObjectURL(url);
 
   return { rowCount, truncated };
+}
+
+export type Nl2sqlHistoryListItem = {
+  id: number;
+  question: string;
+  summary: string;
+  row_count: number;
+  truncated: boolean;
+  exported: boolean;
+  created_at: string;
+};
+
+export type Nl2sqlHistoryDetail = Nl2sqlHistoryListItem & {
+  sql: string;
+  explanation: string;
+};
+
+export async function listNl2sqlHistory(): Promise<Nl2sqlHistoryListItem[]> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/history`, {
+      headers: { ...authHeaders() },
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "加载查询记录失败"));
+  }
+  return response.json() as Promise<Nl2sqlHistoryListItem[]>;
+}
+
+export async function getNl2sqlHistory(
+  id: number,
+): Promise<Nl2sqlHistoryDetail> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/history/${id}`, {
+      headers: { ...authHeaders() },
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "加载查询记录详情失败"));
+  }
+  return response.json() as Promise<Nl2sqlHistoryDetail>;
+}
+
+export async function saveNl2sqlHistory(input: {
+  question: string;
+  sql: string;
+  explanation?: string;
+  row_count?: number;
+  truncated?: boolean;
+  exported?: boolean;
+}): Promise<Nl2sqlHistoryListItem> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/history`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        question: input.question,
+        sql: input.sql,
+        explanation: input.explanation ?? "",
+        row_count: input.row_count ?? 0,
+        truncated: Boolean(input.truncated),
+        exported: Boolean(input.exported),
+      }),
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "保存查询记录失败"));
+  }
+  return response.json() as Promise<Nl2sqlHistoryListItem>;
+}
+
+export async function deleteNl2sqlHistory(id: number): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/nl2sql/history/${id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders() },
+    });
+  } catch {
+    throw new Error(
+      `无法连接后端（${API_BASE_URL}）。请确认后端服务可用。`,
+    );
+  }
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "删除查询记录失败"));
+  }
 }

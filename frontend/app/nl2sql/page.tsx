@@ -1,20 +1,33 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import AuthBar from "@/components/AuthBar";
+import PreferenceLibrary from "@/components/PreferenceLibrary";
+import PreferenceSelector from "@/components/PreferenceSelector";
 import {
+  deleteNl2sqlHistory,
   downloadNl2sqlCsv,
   generateNl2sql,
+  getNl2sqlHistory,
   getNl2sqlSchema,
   getNl2sqlStatus,
+  listNl2sqlHistory,
   runNl2sqlQuery,
+  saveNl2sqlHistory,
   type Nl2sqlGenerateResult,
+  type Nl2sqlHistoryListItem,
   type Nl2sqlQueryResult,
   type Nl2sqlSchemaCatalog,
   type Nl2sqlStatus,
 } from "@/lib/api";
+import { getAuth, pushCloudPreferences } from "@/lib/auth";
+import {
+  loadGroups,
+  loadPreferences,
+  toPreferencePayloads,
+  type PreferenceGroup,
+  type PreferenceItem,
+} from "@/lib/preferences";
 
 const SAMPLE_QUESTION = "华东有多少客户？";
 
@@ -87,8 +100,39 @@ export default function Nl2sqlPage() {
   const [generating, setGenerating] = useState(false);
   const [querying, setQuerying] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [historyItems, setHistoryItems] = useState<Nl2sqlHistoryListItem[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [preferences, setPreferences] = useState<PreferenceItem[]>([]);
+  const [groups, setGroups] = useState<PreferenceGroup[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [usePreferences, setUsePreferences] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [prefHint, setPrefHint] = useState<string | null>(null);
+
+  async function refreshHistory() {
+    try {
+      setHistoryItems(await listNl2sqlHistory());
+      setHistoryError(null);
+    } catch (historyLoadError) {
+      setHistoryError(
+        historyLoadError instanceof Error
+          ? historyLoadError.message
+          : "加载查询记录失败",
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
 
   useEffect(() => {
+    const loaded = loadPreferences("query");
+    setPreferences(loaded);
+    setGroups(loadGroups("query"));
+    setSelectedIds(
+      loaded.filter((item) => item.enabled).map((item) => item.id).slice(0, 5),
+    );
+
     void (async () => {
       try {
         const nextStatus = await getNl2sqlStatus();
@@ -102,7 +146,62 @@ export default function Nl2sqlPage() {
         setLoading(false);
       }
     })();
+    void refreshHistory();
   }, []);
+
+  async function syncQueryPrefsIfLoggedIn(
+    items: PreferenceItem[],
+    nextGroups: PreferenceGroup[],
+  ) {
+    if (!getAuth()?.token) return;
+    try {
+      await pushCloudPreferences({
+        preferences: loadPreferences("report"),
+        groups: loadGroups("report"),
+        query_preferences: items,
+        query_groups: nextGroups,
+      });
+    } catch {
+      // ignore sync errors for local editing
+    }
+  }
+
+  function handleLibraryChange(
+    items: PreferenceItem[],
+    nextGroups: PreferenceGroup[],
+  ) {
+    setPreferences(items);
+    setGroups(nextGroups);
+    setSelectedIds((prev) => {
+      const enabledDefaults = items
+        .filter((item) => item.enabled)
+        .map((item) => item.id);
+      const stillExisting = prev.filter((id) =>
+        items.some((item) => item.id === id),
+      );
+      const merged = [...new Set([...stillExisting, ...enabledDefaults])];
+      return merged.slice(0, 5);
+    });
+    void syncQueryPrefsIfLoggedIn(items, nextGroups);
+  }
+
+  function handleUsePreferencesChange(value: boolean) {
+    setUsePreferences(value);
+    setPrefHint(null);
+    if (value && preferences.length === 0) {
+      setPrefHint("取数偏好为空，请先添加后再启用。");
+    }
+  }
+
+  function validatePreferences(): boolean {
+    if (!usePreferences) return true;
+    const selected = preferences.filter((item) => selectedIds.includes(item.id));
+    if (preferences.length === 0 || selected.length === 0) {
+      setPrefHint("已启用取数偏好，但未选中任何条目。请先添加并勾选，或关闭开关。");
+      return false;
+    }
+    return true;
+  }
 
   const sqlMatchesPreview = previewedSql !== null && sql.trim() === previewedSql.trim();
   const canConfirm = Boolean(result && sqlMatchesPreview);
@@ -159,6 +258,8 @@ export default function Nl2sqlPage() {
   }
 
   async function handleGenerateAndPreview() {
+    if (!validatePreferences()) return;
+
     setGenerating(true);
     setGenerateError(null);
     setPreviewError(null);
@@ -169,7 +270,13 @@ export default function Nl2sqlPage() {
     setPreviewedSql(null);
 
     try {
-      const next = await generateNl2sql(question);
+      const selectedPrefs = preferences.filter((item) =>
+        selectedIds.includes(item.id),
+      );
+      const next = await generateNl2sql(question, {
+        usePreferences,
+        preferences: toPreferencePayloads(selectedPrefs),
+      });
       setGeneration(next);
 
       const genMessage = classifyGenerateMessage(next);
@@ -219,9 +326,26 @@ export default function Nl2sqlPage() {
     setExportNotice(null);
     try {
       const meta = await downloadNl2sqlCsv(sql);
-      setExportNotice(
-        `已下载 CSV：${meta.rowCount} 行${meta.truncated ? "（已按上限截断）" : ""}。`,
-      );
+      try {
+        await saveNl2sqlHistory({
+          question,
+          sql,
+          explanation: generation?.explanation ?? "",
+          row_count: meta.rowCount,
+          truncated: meta.truncated,
+          exported: true,
+        });
+        await refreshHistory();
+        setExportNotice(
+          `已下载 CSV：${meta.rowCount} 行${meta.truncated ? "（已按上限截断）" : ""}，并已保存到查询记录。`,
+        );
+      } catch (saveError) {
+        setExportNotice(
+          `已下载 CSV：${meta.rowCount} 行${meta.truncated ? "（已按上限截断）" : ""}。查询记录保存失败：${
+            saveError instanceof Error ? saveError.message : "未知错误"
+          }`,
+        );
+      }
     } catch (exportErrorValue) {
       setExportError(
         exportErrorValue instanceof Error
@@ -233,24 +357,53 @@ export default function Nl2sqlPage() {
     }
   }
 
+  async function handleRestoreHistory(id: number) {
+    setHistoryError(null);
+    try {
+      const detail = await getNl2sqlHistory(id);
+      setQuestion(detail.question);
+      setSql(detail.sql);
+      setGeneration({
+        status: "ok",
+        sql: detail.sql,
+        explanation: detail.explanation || "来自查询记录",
+        assumptions: [],
+        clarifying_question: "",
+      });
+      setResult(null);
+      setPreviewedSql(null);
+      setConfirmed(false);
+      setGenerateError(null);
+      setPreviewError("已恢复历史问题与 SQL，请点击「重新预览」核对后再导出。");
+      setExportError(null);
+      setExportNotice(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (restoreError) {
+      setHistoryError(
+        restoreError instanceof Error ? restoreError.message : "恢复失败",
+      );
+    }
+  }
+
+  async function handleDeleteHistory(id: number) {
+    if (!window.confirm("确定删除这条查询记录吗？")) return;
+    try {
+      await deleteNl2sqlHistory(id);
+      setHistoryItems((prev) => prev.filter((item) => item.id !== id));
+    } catch (deleteError) {
+      setHistoryError(
+        deleteError instanceof Error ? deleteError.message : "删除失败",
+      );
+    }
+  }
+
   return (
-    <main className="mx-auto min-h-screen max-w-5xl px-4 py-10 sm:px-6">
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">智能取数</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            提问生成 SQL → 预览核对 → 确认后导出 CSV。当前为主路径阶段（P4）。
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/"
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            返回分析
-          </Link>
-          <AuthBar />
-        </div>
+    <div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-900">语义取数</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          提问生成 SQL → 预览核对 → 确认后导出 CSV；导出成功会写入查询记录。
+        </p>
       </div>
 
       <Stepper current={flowStep} />
@@ -270,6 +423,26 @@ export default function Nl2sqlPage() {
           </p>
         </section>
       )}
+
+      <div className="mb-6">
+        <PreferenceSelector
+          preferences={preferences}
+          groups={groups}
+          usePreferences={usePreferences}
+          selectedIds={selectedIds}
+          onUsePreferencesChange={handleUsePreferencesChange}
+          onSelectedIdsChange={(ids) => {
+            setSelectedIds(ids);
+            setPrefHint(null);
+          }}
+          onOpenLibrary={() => setLibraryOpen(true)}
+          hint={prefHint}
+          enableLabel="启用取数偏好"
+          manageLabel="管理取数偏好"
+          helpText="取数偏好与表报偏好相互独立。启用后会在生成 SQL 前注入默认筛选与口径约束。"
+          emptyText="取数偏好为空，请先添加后再启用。"
+        />
+      </div>
 
       <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -435,7 +608,7 @@ export default function Nl2sqlPage() {
       </section>
 
       {schema && (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-800">
             可查询表结构（{schema.database}）
           </h2>
@@ -467,6 +640,70 @@ export default function Nl2sqlPage() {
           </div>
         </section>
       )}
-    </main>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="text-sm font-semibold text-slate-800">查询记录</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          成功导出 CSV 后会自动保存。点击「恢复」可回填问题与 SQL。
+        </p>
+        {historyLoading && (
+          <p className="mt-3 text-sm text-slate-500">加载记录…</p>
+        )}
+        {historyError && (
+          <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {historyError}
+          </p>
+        )}
+        {!historyLoading && historyItems.length === 0 && (
+          <p className="mt-3 text-sm text-slate-500">暂无查询记录。</p>
+        )}
+        <ul className="mt-4 space-y-3">
+          {historyItems.map((item) => (
+            <li
+              key={item.id}
+              className="rounded-lg border border-slate-100 bg-slate-50 p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-900">{item.question}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {new Date(item.created_at).toLocaleString("zh-CN")} ·{" "}
+                    {item.row_count} 行
+                    {item.exported ? " · 已导出" : ""}
+                    {item.truncated ? " · 曾截断" : ""}
+                  </p>
+                  {item.summary && (
+                    <p className="mt-1 text-sm text-slate-600">{item.summary}</p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleRestoreHistory(item.id)}
+                    className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+                  >
+                    恢复
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteHistory(item.id)}
+                    className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <PreferenceLibrary
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        onChange={handleLibraryChange}
+        scope="query"
+      />
+    </div>
   );
 }

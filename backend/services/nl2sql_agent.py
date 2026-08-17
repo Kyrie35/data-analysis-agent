@@ -35,13 +35,36 @@ def _format_schema_for_prompt(catalog: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _build_user_prompt(question: str, catalog: dict[str, Any]) -> str:
+def _format_preferences_block(preferences: list[dict[str, Any]] | None) -> str:
+    items = preferences or []
+    usable = [
+        item
+        for item in items
+        if isinstance(item, dict) and str(item.get("content") or "").strip()
+    ]
+    if not usable:
+        return ""
+    lines = ["取数偏好约束（必须遵守，不得与之冲突）："]
+    for index, item in enumerate(usable[:5], start=1):
+        title = str(item.get("title") or "未命名偏好").strip()
+        content = str(item.get("content") or "").strip()
+        lines.append(f"{index}. 【{title}】{content}")
+    return "\n".join(lines)
+
+
+def _build_user_prompt(
+    question: str,
+    catalog: dict[str, Any],
+    preferences: list[dict[str, Any]] | None = None,
+) -> str:
     whitelist = get_table_whitelist()
     max_rows = get_max_rows()
     schema_text = _format_schema_for_prompt(catalog)
+    preferences_block = _format_preferences_block(preferences)
+    preference_section = f"\n{preferences_block}\n" if preferences_block else "\n"
 
     return f"""请根据 schema 将用户问题转为 MySQL 只读查询。
-
+{preference_section}
 {schema_text}
 
 允许使用的表（白名单）：{', '.join(whitelist)}
@@ -52,10 +75,11 @@ def _build_user_prompt(question: str, catalog: dict[str, Any]) -> str:
 3. 金额/销售额 = order_items.quantity * order_items.unit_price
 4. 区域名在 regions.name（华东/华北/华南/西南）
 5. 订单状态 orders.status：pending/paid/shipped/completed/cancelled；统计销售时通常排除 cancelled
-6. 如问题模糊，不要瞎猜关键过滤条件，返回 status=clarify 并给出 clarifying_question
-7. 如问题与库无关或无法用现有表回答，返回 status=refuse
-8. 建议对明细查询加合理 LIMIT（不超过 {max_rows}）；聚合可不加
-9. 必须输出如下 JSON（不要包裹 ```）：
+6. 若存在取数偏好，必须优先落实偏好中的筛选、口径、排序与排除规则
+7. 如问题模糊，不要瞎猜关键过滤条件，返回 status=clarify 并给出 clarifying_question
+8. 如问题与库无关或无法用现有表回答，返回 status=refuse
+9. 建议对明细查询加合理 LIMIT（不超过 {max_rows}）；聚合可不加
+10. 必须输出如下 JSON（不要包裹 ```）：
 {{
   "status": "ok" | "clarify" | "refuse",
   "sql": "SQL字符串或null",
@@ -97,7 +121,10 @@ def _normalize_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def generate_sql_from_question(question: str) -> dict[str, Any]:
+def generate_sql_from_question(
+    question: str,
+    preferences: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Generate SQL from natural language. Does not execute the query."""
     cleaned = (question or "").strip()
     if not cleaned:
@@ -127,7 +154,10 @@ def generate_sql_from_question(question: str) -> dict[str, Any]:
     result = _call_deepseek(
         [
             {"role": "system", "content": NL2SQL_SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(cleaned, catalog)},
+            {
+                "role": "user",
+                "content": _build_user_prompt(cleaned, catalog, preferences),
+            },
         ]
     )
 

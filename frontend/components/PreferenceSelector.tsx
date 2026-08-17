@@ -19,6 +19,13 @@ type PreferenceSelectorProps = {
   onSelectedIdsChange: (ids: string[]) => void;
   onOpenLibrary: () => void;
   hint?: string | null;
+  /** 启用开关文案 */
+  enableLabel?: string;
+  /** 管理入口文案 */
+  manageLabel?: string;
+  /** 说明文案 */
+  helpText?: string;
+  emptyText?: string;
 };
 
 export default function PreferenceSelector({
@@ -30,6 +37,10 @@ export default function PreferenceSelector({
   onSelectedIdsChange,
   onOpenLibrary,
   hint,
+  enableLabel = "启用表报偏好",
+  manageLabel = "管理表报偏好",
+  helpText = "偏好保存在本机浏览器，并可同步云端。启用后会作为分析口径约束注入报告生成。",
+  emptyText = "表报偏好为空，请先添加后再启用。",
 }: PreferenceSelectorProps) {
   const [titleQuery, setTitleQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState<string | "all" | "ungrouped">(
@@ -70,21 +81,18 @@ export default function PreferenceSelector({
             checked={usePreferences}
             onChange={(event) => onUsePreferencesChange(event.target.checked)}
           />
-          从偏好库视角分析
+          {enableLabel}
         </label>
         <button
           type="button"
           onClick={onOpenLibrary}
           className="text-sm font-medium text-blue-600 hover:text-blue-700"
         >
-          管理偏好库
+          {manageLabel}
         </button>
       </div>
 
-      <p className="mt-2 text-xs text-slate-500">
-        偏好保存在本机浏览器。启用后会先作为硬约束改写分析口径（例如「订单数按
-        80%」「销售额按 120%」），再生成报告与指标/图。
-      </p>
+      <p className="mt-2 text-xs text-slate-500">{helpText}</p>
 
       {hint && (
         <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -95,9 +103,7 @@ export default function PreferenceSelector({
       {usePreferences && (
         <div className="mt-4 space-y-2">
           {preferences.length === 0 ? (
-            <p className="text-sm text-slate-500">
-              偏好库为空，请先添加偏好后再启用。
-            </p>
+            <p className="text-sm text-slate-500">{emptyText}</p>
           ) : (
             <>
               <div className="grid gap-2 sm:grid-cols-2">

@@ -16,6 +16,16 @@ router = APIRouter(prefix="/api/preferences", tags=["preferences"])
 class PreferenceSyncPayload(BaseModel):
     preferences: list[dict[str, Any]] = Field(default_factory=list)
     groups: list[dict[str, Any]] = Field(default_factory=list)
+    query_preferences: list[dict[str, Any]] = Field(default_factory=list)
+    query_groups: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _load_json_list(raw: str | None) -> list[Any]:
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
 
 
 @router.get("")
@@ -24,15 +34,20 @@ def get_preferences(user: CurrentUser, db: DbSession):
         select(PreferenceBundle).where(PreferenceBundle.user_id == user.id)
     )
     if bundle is None:
-        return {"preferences": [], "groups": [], "updated_at": None}
-    try:
-        preferences = json.loads(bundle.preferences_json or "[]")
-        groups = json.loads(bundle.groups_json or "[]")
-    except json.JSONDecodeError:
-        preferences, groups = [], []
+        return {
+            "preferences": [],
+            "groups": [],
+            "query_preferences": [],
+            "query_groups": [],
+            "updated_at": None,
+        }
     return {
-        "preferences": preferences if isinstance(preferences, list) else [],
-        "groups": groups if isinstance(groups, list) else [],
+        "preferences": _load_json_list(bundle.preferences_json),
+        "groups": _load_json_list(bundle.groups_json),
+        "query_preferences": _load_json_list(
+            getattr(bundle, "query_preferences_json", None)
+        ),
+        "query_groups": _load_json_list(getattr(bundle, "query_groups_json", None)),
         "updated_at": bundle.updated_at.isoformat() if bundle.updated_at else None,
     }
 
@@ -48,10 +63,16 @@ def put_preferences(body: PreferenceSyncPayload, user: CurrentUser, db: DbSessio
 
     bundle.preferences_json = json.dumps(body.preferences, ensure_ascii=False)
     bundle.groups_json = json.dumps(body.groups, ensure_ascii=False)
+    bundle.query_preferences_json = json.dumps(
+        body.query_preferences, ensure_ascii=False
+    )
+    bundle.query_groups_json = json.dumps(body.query_groups, ensure_ascii=False)
     db.commit()
     db.refresh(bundle)
     return {
         "preferences": body.preferences,
         "groups": body.groups,
+        "query_preferences": body.query_preferences,
+        "query_groups": body.query_groups,
         "updated_at": bundle.updated_at.isoformat() if bundle.updated_at else None,
     }

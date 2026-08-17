@@ -1,3 +1,5 @@
+export type PreferenceScope = "report" | "query";
+
 export type PreferenceGroup = {
   id: string;
   name: string;
@@ -18,14 +20,51 @@ export type PreferencePayload = {
   content: string;
 };
 
-export const PREFERENCES_STORAGE_KEY = "da-agent-preferences";
-export const GROUPS_STORAGE_KEY = "da-agent-preference-groups";
+/** 左侧「偏好库」下的两套独立偏好 */
+export const PREFERENCE_SCOPE_META: Record<
+  PreferenceScope,
+  { label: string; shortLabel: string; description: string }
+> = {
+  report: {
+    label: "表报偏好",
+    shortLabel: "表报",
+    description: "用于表报生成：约束分析视角、口径与关注点",
+  },
+  query: {
+    label: "取数偏好",
+    shortLabel: "取数",
+    description: "用于语义取数：约束默认筛选、口径与 SQL 生成习惯",
+  },
+};
+
+const LEGACY_PREFERENCES_KEY = "da-agent-preferences";
+const LEGACY_GROUPS_KEY = "da-agent-preference-groups";
+
+const STORAGE_KEYS: Record<
+  PreferenceScope,
+  { preferences: string; groups: string }
+> = {
+  report: {
+    preferences: "da-agent-preferences-report",
+    groups: "da-agent-preference-groups-report",
+  },
+  query: {
+    preferences: "da-agent-preferences-query",
+    groups: "da-agent-preference-groups-query",
+  },
+};
+
 export const MAX_PREFERENCES = 100;
 export const MAX_GROUPS = 30;
 export const MAX_PREFERENCES_PER_REQUEST = 5;
 export const MAX_CONTENT_LENGTH = 300;
 export const MAX_TITLE_LENGTH = 80;
 export const MAX_GROUP_NAME_LENGTH = 40;
+
+/** @deprecated 兼容旧引用，等同 report 偏好存储键 */
+export const PREFERENCES_STORAGE_KEY = STORAGE_KEYS.report.preferences;
+/** @deprecated 兼容旧引用 */
+export const GROUPS_STORAGE_KEY = STORAGE_KEYS.report.groups;
 
 function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -38,79 +77,110 @@ function createId(): string {
   return `pref-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function loadPreferences(): PreferenceItem[] {
+function normalizePreferences(parsed: unknown): PreferenceItem[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.title === "string" &&
+        typeof item.content === "string",
+    )
+    .map((item) => ({
+      id: item.id,
+      title: item.title.slice(0, MAX_TITLE_LENGTH),
+      content: item.content.slice(0, MAX_CONTENT_LENGTH),
+      enabled: Boolean(item.enabled),
+      groupId:
+        typeof item.groupId === "string" && item.groupId ? item.groupId : null,
+      updatedAt:
+        typeof item.updatedAt === "string"
+          ? item.updatedAt
+          : new Date().toISOString(),
+    }));
+}
+
+function normalizeGroups(parsed: unknown): PreferenceGroup[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(
+      (item) =>
+        item && typeof item.id === "string" && typeof item.name === "string",
+    )
+    .map((item) => ({
+      id: item.id,
+      name: item.name.slice(0, MAX_GROUP_NAME_LENGTH) || "未命名分组",
+      updatedAt:
+        typeof item.updatedAt === "string"
+          ? item.updatedAt
+          : new Date().toISOString(),
+    }))
+    .slice(0, MAX_GROUPS);
+}
+
+function migrateLegacyReportIfNeeded(): void {
+  if (!canUseStorage()) return;
+  const reportKey = STORAGE_KEYS.report.preferences;
+  const reportGroupsKey = STORAGE_KEYS.report.groups;
+  if (window.localStorage.getItem(reportKey)) return;
+
+  const legacyPrefs = window.localStorage.getItem(LEGACY_PREFERENCES_KEY);
+  const legacyGroups = window.localStorage.getItem(LEGACY_GROUPS_KEY);
+  if (!legacyPrefs && !legacyGroups) return;
+
+  if (legacyPrefs) {
+    window.localStorage.setItem(reportKey, legacyPrefs);
+  }
+  if (legacyGroups) {
+    window.localStorage.setItem(reportGroupsKey, legacyGroups);
+  }
+}
+
+export function loadPreferences(scope: PreferenceScope = "report"): PreferenceItem[] {
   if (!canUseStorage()) return [];
+  if (scope === "report") migrateLegacyReportIfNeeded();
 
   try {
-    const raw = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEYS[scope].preferences);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as PreferenceItem[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item) =>
-          item &&
-          typeof item.id === "string" &&
-          typeof item.title === "string" &&
-          typeof item.content === "string",
-      )
-      .map((item) => ({
-        id: item.id,
-        title: item.title.slice(0, MAX_TITLE_LENGTH),
-        content: item.content.slice(0, MAX_CONTENT_LENGTH),
-        enabled: Boolean(item.enabled),
-        groupId:
-          typeof item.groupId === "string" && item.groupId
-            ? item.groupId
-            : null,
-        updatedAt:
-          typeof item.updatedAt === "string"
-            ? item.updatedAt
-            : new Date().toISOString(),
-      }));
+    return normalizePreferences(JSON.parse(raw)).slice(0, MAX_PREFERENCES);
   } catch {
     return [];
   }
 }
 
-export function savePreferences(items: PreferenceItem[]): void {
+export function savePreferences(
+  items: PreferenceItem[],
+  scope: PreferenceScope = "report",
+): void {
   if (!canUseStorage()) return;
   window.localStorage.setItem(
-    PREFERENCES_STORAGE_KEY,
+    STORAGE_KEYS[scope].preferences,
     JSON.stringify(items.slice(0, MAX_PREFERENCES)),
   );
 }
 
-export function loadGroups(): PreferenceGroup[] {
+export function loadGroups(scope: PreferenceScope = "report"): PreferenceGroup[] {
   if (!canUseStorage()) return [];
+  if (scope === "report") migrateLegacyReportIfNeeded();
+
   try {
-    const raw = window.localStorage.getItem(GROUPS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEYS[scope].groups);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as PreferenceGroup[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item) =>
-          item && typeof item.id === "string" && typeof item.name === "string",
-      )
-      .map((item) => ({
-        id: item.id,
-        name: item.name.slice(0, MAX_GROUP_NAME_LENGTH) || "未命名分组",
-        updatedAt:
-          typeof item.updatedAt === "string"
-            ? item.updatedAt
-            : new Date().toISOString(),
-      }))
-      .slice(0, MAX_GROUPS);
+    return normalizeGroups(JSON.parse(raw));
   } catch {
     return [];
   }
 }
 
-export function saveGroups(groups: PreferenceGroup[]): void {
+export function saveGroups(
+  groups: PreferenceGroup[],
+  scope: PreferenceScope = "report",
+): void {
   if (!canUseStorage()) return;
   window.localStorage.setItem(
-    GROUPS_STORAGE_KEY,
+    STORAGE_KEYS[scope].groups,
     JSON.stringify(groups.slice(0, MAX_GROUPS)),
   );
 }

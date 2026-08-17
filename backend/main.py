@@ -14,7 +14,7 @@ from services.db import init_db
 
 load_dotenv()
 
-app = FastAPI(title="Data Analysis Agent API", version="0.2.0")
+app = FastAPI(title="DataPilot API", version="0.2.0")
 
 default_origins = "http://localhost:3000,http://127.0.0.1:3000"
 allowed_origins = [

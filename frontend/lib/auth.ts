@@ -167,6 +167,8 @@ export async function deleteHistory(id: number): Promise<void> {
 export async function fetchCloudPreferences(): Promise<{
   preferences: unknown[];
   groups: unknown[];
+  query_preferences: unknown[];
+  query_groups: unknown[];
   updated_at: string | null;
 }> {
   const response = await fetch(`${API_BASE_URL}/api/preferences`, {
@@ -175,12 +177,29 @@ export async function fetchCloudPreferences(): Promise<{
   if (!response.ok) {
     throw new Error(await parseError(response, "拉取云端偏好失败"));
   }
-  return response.json();
+  const data = (await response.json()) as {
+    preferences?: unknown[];
+    groups?: unknown[];
+    query_preferences?: unknown[];
+    query_groups?: unknown[];
+    updated_at: string | null;
+  };
+  return {
+    preferences: Array.isArray(data.preferences) ? data.preferences : [],
+    groups: Array.isArray(data.groups) ? data.groups : [],
+    query_preferences: Array.isArray(data.query_preferences)
+      ? data.query_preferences
+      : [],
+    query_groups: Array.isArray(data.query_groups) ? data.query_groups : [],
+    updated_at: data.updated_at,
+  };
 }
 
 export async function pushCloudPreferences(payload: {
   preferences: unknown[];
   groups: unknown[];
+  query_preferences?: unknown[];
+  query_groups?: unknown[];
 }): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/api/preferences`, {
     method: "PUT",
@@ -188,7 +207,12 @@ export async function pushCloudPreferences(payload: {
       "Content-Type": "application/json",
       ...authHeaders(),
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      preferences: payload.preferences,
+      groups: payload.groups,
+      query_preferences: payload.query_preferences ?? [],
+      query_groups: payload.query_groups ?? [],
+    }),
   });
   if (!response.ok) {
     throw new Error(await parseError(response, "同步云端偏好失败"));
